@@ -3,3 +3,5 @@ head_labels.nii.gz
 *.png
 cat_head.msh
 simu_cat_tdcs/
+__pycache__/
+*.pyc
