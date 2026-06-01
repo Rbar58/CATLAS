@@ -16,8 +16,9 @@ BASE="https://github.com/simnibs/simnibs/releases/download/v${V}"
 # 1. SimNIBS wheel (no deps -- it pulls non-PyPI packages we handle ourselves)
 pip install --no-deps "${BASE}/simnibs-${V}-cp311-cp311-linux_x86_64.whl"
 
-# 2. ordinary PyPI deps
-pip install h5py jsonschema pillow requests numba gmsh scipy nibabel scikit-learn SimpleITK
+# 2. ordinary PyPI deps (+ antspyx for the accurate Stage-1 registration, and
+#    SimpleITK for the fallback registration)
+pip install h5py jsonschema pillow requests numba gmsh scipy nibabel scikit-learn SimpleITK antspyx
 
 # 3. SimNIBS-channel wheels (compiled, cp311 manylinux)
 pip install --no-deps \

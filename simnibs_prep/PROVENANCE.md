@@ -25,6 +25,7 @@ unpublished data and is intentionally **not** committed; supply it via `--mri`.
 | scipy | 1.17.1 |
 | scikit-learn | 1.8.0 |
 | nibabel | 5.4.2 |
+| antspyx (Stage-1 registration) | 0.6.3 |
 
 OS: headless Linux x86_64. SimNIBS meshing was installed in a non-standard
 (pip/wheel) way — see `install_simnibs_meshing.sh`. On your own machine the
@@ -32,20 +33,21 @@ normal SimNIBS installer is fine; the version is what matters.
 
 ## Pipeline (script: `realmri_pipeline.py`)
 
-Deterministic seeds: similarity sampling seed 42, B-spline sampling seed 7,
-GaussianMixture `random_state=0`.
+Reproducibility: the default ANTs `SyNRA` stage is essentially deterministic
+for a fixed input/version; the GaussianMixture in Stage 2 uses `random_state=0`.
+(The SimpleITK fallback uses sampling seeds 42 and 7.)
 
-**Stage 1 — register CATLAS → subject** (`stage1_register`)
-- Brain mask in atlas space = `(TPM GM+WM+CSF) ≥ 0.5`; used as the metric's
-  *moving mask* so registration is driven by brain voxels only.
-- Mattes mutual information; intensities normalized.
-- **Similarity3D** (rigid + single isotropic scale, so the brain can't
-  shear/balloon), multi-start at initial scales {0.6, 0.8, 1.0}, geometry-
-  centered init, RegularStepGradientDescent, shrink [4,2,1] / smooth [2,1,0].
-  Best (lowest metric) kept. (Observed final scale ≈ 0.82.)
-- **B-spline deformable** refine (6×6×6 control grid) initialized on top of the
-  similarity transform, LBFGSB, shrink [3,1] / smooth [1,0].
-- Output: `brain_in_head.nii.gz` (atlas brain warped to subject; ≈33 mL).
+**Stage 1 — register CATLAS → subject** (`stage1_register_ants`, default)
+- Brain mask in atlas space = `(TPM GM+WM+CSF) ≥ 0.5`, used as the *moving mask*
+  (`mask_all_stages=True`) so every stage is driven by brain voxels only.
+- **ANTs `SyNRA`**: rigid → affine → SyN deformable, on `CatT1avg.nii` (moving)
+  → subject MRI (fixed). Warp the atlas brain mask with `genericLabel`; keep
+  largest component; fill holes.
+- Output: `brain_in_head.nii.gz` (atlas brain warped to subject; **≈26 mL**,
+  physiologically correct for a cat).
+- *Fallback* `stage1_register` (SimpleITK Similarity3D multi-start {0.6,0.8,1.0}
+  + B-spline 6×6×6) is retained but less accurate (≈33 mL, over-includes
+  ventrally); select with `--reg simpleitk`.
 
 **Stage 2 — segment** (`stage2_segment`)
 - **Head/scalp**: Gaussian-smooth (σ=0.8); air level estimated from the 8 FOV

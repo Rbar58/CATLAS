@@ -88,6 +88,38 @@ def stage1_register(mri, atlas_dir, out):
 
 
 # ----------------------------------------------------------------------------
+def stage1_register_ants(mri, atlas_dir, out):
+    """Preferred Stage 1: ANTs SyN (rigid+affine+deformable), metric focused on
+    the brain via the atlas brain mask. Much more accurate than the SimpleITK
+    B-spline above for warping a brain-only atlas onto a whole head (observed
+    ~26 mL brain vs ~33 mL, i.e. physiologically correct for a cat). Needs
+    `pip install antspyx`."""
+    import ants
+    fixed  = ants.image_read(mri)
+    moving = ants.image_read(os.path.join(atlas_dir, "CatT1avg.nii"))
+    tpm = nib.load(os.path.join(atlas_dir, "TPM.nii")).get_fdata()
+    bm = ((tpm[..., 0] + tpm[..., 1] + tpm[..., 2]) >= 0.5).astype("float32")
+    bm_path = os.path.join(out, "atlas_brain.nii.gz")
+    nib.save(nib.Nifti1Image(bm, nib.load(os.path.join(atlas_dir, "CatT1avg.nii")).affine), bm_path)
+    moving_mask = ants.image_read(bm_path)
+    reg = ants.registration(fixed=fixed, moving=moving, type_of_transform="SyNRA",
+                            moving_mask=moving_mask, mask_all_stages=True)
+    warped = ants.apply_transforms(fixed=fixed, moving=moving_mask,
+                                   transformlist=reg["fwdtransforms"],
+                                   interpolator="genericLabel")
+    arr = warped.numpy() > 0.5
+    lab, _ = ndimage.label(arr)
+    if lab.max() > 0:
+        arr = lab == (np.argmax(np.bincount(lab.flat)[1:]) + 1)
+    arr = ndimage.binary_fill_holes(arr)
+    out_brain = os.path.join(out, "brain_in_head.nii.gz")
+    nib.save(nib.Nifti1Image(arr.astype("uint8"), nib.load(mri).affine), out_brain)
+    sp = np.prod(nib.load(mri).header.get_zooms()[:3])
+    print(f"  ANTs brain mask: {int(arr.sum())} vox  ~{int(arr.sum())*sp/1000:.1f} mL  -> {out_brain}")
+    return out_brain
+
+
+# ----------------------------------------------------------------------------
 def stage2_segment(mri, brain_path, out):
     from sklearn.mixture import GaussianMixture
     img = nib.load(mri); vol = img.get_fdata().astype(np.float32); aff = img.affine
@@ -159,12 +191,15 @@ if __name__ == "__main__":
     ap.add_argument("--atlas-dir", default=".", help="dir with CatT1avg.nii + TPM.nii")
     ap.add_argument("--out", default="./out")
     ap.add_argument("--stage", default="all", choices=["all", "1", "2", "3"])
+    ap.add_argument("--reg", default="ants", choices=["ants", "simpleitk"],
+                    help="Stage-1 registration backend (ants is far more accurate)")
     a = ap.parse_args()
     os.makedirs(a.out, exist_ok=True)
     brain = os.path.join(a.out, "brain_in_head.nii.gz")
     seg = os.path.join(a.out, "cat_tissues.nii.gz")
     if a.stage in ("all", "1"):
-        print("Stage 1: register CATLAS -> head"); brain = stage1_register(a.mri, a.atlas_dir, a.out)
+        print(f"Stage 1: register CATLAS -> head ({a.reg})")
+        brain = (stage1_register_ants if a.reg == "ants" else stage1_register)(a.mri, a.atlas_dir, a.out)
     if a.stage in ("all", "2"):
         print("Stage 2: segment");                 seg = stage2_segment(a.mri, brain, a.out)
     if a.stage in ("all", "3"):
