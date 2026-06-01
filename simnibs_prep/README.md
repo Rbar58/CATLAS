@@ -1,84 +1,79 @@
-# Cat head model for SimNIBS — starter kit
+# Cat head model for SimNIBS
 
-This folder turns the **brain-only CATLAS** atlas into an **approximate full
-head** that [SimNIBS](https://simnibs.github.io) can mesh and simulate
-(TMS / tES electric fields).
+A subject-specific cat head model for **SimNIBS** electric-field simulation
+(TMS / tES), built from a **real whole-head MRI** anchored to the **CATLAS**
+brain atlas. The tetrahedral mesh was generated in-pipeline (see
+`realmri_pipeline.py`); you only need to run the *simulation* on your machine.
 
-## ⚠️ Read this first (the honest caveats)
+> There are two pipelines in this folder:
+> - **`realmri_pipeline.py`** — *recommended.* Uses a real whole-head MRI +
+>   CATLAS. This produced the delivered `cat_head.msh`.
+> - `build_head_segmentation.py` — older fallback that synthesises a head from
+>   the brain-only atlas *without* any real MRI. Keep only if you have no scan.
 
-- CATLAS contains **only brain** (grey matter, white matter, CSF). It has **no
-  skull and no scalp**. Electric-field models depend heavily on the skull and
-  scalp, so those layers had to be **invented** here by growing shells outward
-  from the brain.
-- The skull/scalp are therefore **idealised shells, not a real cat skull**.
-  Use this for **learning the pipeline and qualitative exploration**, not for
-  publication-grade dosimetry.
-- SimNIBS' automatic segmentation (`charm`) is built for **human** heads and
-  will not work on a cat — that's exactly why we build the segmentation
-  manually here instead.
+## ⚠️ Honest quality notes (first-pass model)
 
-## What's in this folder
+This is a **proof-of-concept / first-pass** model — good for validating the
+pipeline and qualitative work, not yet publication-grade dosimetry:
 
-| File | Purpose |
-|------|---------|
-| `build_head_segmentation.py` | Builds the labelled head volume from `../TPM.nii`. |
-| `run_simnibs_cat.py` | Example tDCS simulation script (run on YOUR machine). |
-| `README.md` | This guide. |
+- **Skull is approximate.** T1 MRI cannot image bone, so the skull is a
+  geometric shell grown around the brain at a fixed ~1.5 mm thickness. For
+  accurate dosimetry you need a **CT** (or a dual-echo/UTE scan) to place real
+  bone. The skull dominates tES/TMS fields, so treat absolute values with care.
+- **Single brain compartment.** This in-vivo T1 has negligible grey/white
+  contrast (cluster means ~250 vs ~262), so GM and WM are merged into one
+  `brain` label rather than fabricating a split. Add WM later from a better
+  scan or by warping the CATLAS WM prior.
+- **Brain mask** is registration-derived (CATLAS→subject) and slightly
+  over-includes ventrally near the skull base. Tighten by hand in ITK-SNAP if
+  needed.
+- SimNIBS' automatic segmentation (`charm`) is **human-only** and will not work
+  on a cat — that is why the segmentation is built explicitly here.
 
-Running `build_head_segmentation.py` produces **`head_labels.nii.gz`** — a
-0.5 mm labelled head (1=WM, 2=GM, 3=CSF, 4=skull, 5=scalp). It isn't checked
-into git (it's a derived binary); you regenerate it in step 3 below. The labels
-use **SimNIBS' standard tissue numbers**, so SimNIBS applies its default
-conductivities automatically — no extra setup needed.
+## Delivered files (sent to you directly; not committed — they derive from your unpublished MRI)
 
-## Step-by-step (on your own computer, where SimNIBS is installed)
+| File | What it is |
+|------|------------|
+| `cat_head.msh` | The tetrahedral head mesh (SimNIBS). Open in `gmsh`. |
+| `cat_tissues.nii.gz` | The labelled volume it was meshed from (2=brain 3=CSF 4=bone 5=scalp). |
+| `seg_qc.png`, `seg_qc_contour.png` | QC: tissue maps / boundaries on the MRI. |
 
-1. **Install SimNIBS** if you haven't: https://simnibs.github.io/simnibs/build/html/installation/simnibs_installer.html
+Labels use **SimNIBS standard tissue numbers**, so default conductivities apply
+automatically (note: WM=1 is absent; brain is 2=GM with GM conductivity).
 
-2. **Get the whole repo on your computer** (this `simnibs_prep` folder *and*
-   `TPM.nii` one level up). The cloud session that generated this can't reach
-   your local SimNIBS.
+## Run a simulation (on your computer, where SimNIBS is installed)
 
-3. **Generate the labelled head volume** (open a terminal in this folder):
-   ```
-   pip install nibabel numpy scipy      # one-time, if you don't have them
-   python build_head_segmentation.py
-   ```
-   This reads `../TPM.nii` and writes `head_labels.nii.gz`.
-
-4. **Build the mesh:**
-   ```
-   meshmesh head_labels.nii.gz cat_head.msh --voxsize_meshing 0.5
-   ```
-   This produces `cat_head.msh`, a tetrahedral head mesh. (`--voxsize_meshing
-   0.5` matches the 0.5 mm data and resolves the thin cat-skull shell.)
-
-5. **Look at the mesh** to sanity-check it:
-   ```
-   gmsh cat_head.msh
-   ```
-   You should see nested brain → skull → scalp surfaces.
-
-6. **Run the example simulation:**
+1. Put `cat_head.msh` and `run_simnibs_cat.py` in the same folder.
+2. Edit the electrode coordinates at the top of `run_simnibs_cat.py` if you want
+   (they default to two well-separated scalp points auto-computed from the model;
+   they're world/mm coordinates and get projected onto the scalp).
+3. Run:
    ```
    simnibs_python run_simnibs_cat.py
    ```
-   Results land in `simu_cat_tdcs/`. Open the resulting `.msh` in `gmsh` to see
-   the electric field (`normE`) on the brain.
+   Results land in `simu_cat_tdcs/`. Open that `.msh` in `gmsh` to see the
+   electric field (`normE`) on the brain.
 
-## Adjusting things
+Because this is a custom mesh (no `m2m_` folder), give electrode/coil positions
+as **coordinates**, not EEG names like "Cz".
 
-- **Move the electrodes / coil:** edit the coordinates near the top of
-  `run_simnibs_cat.py`. They're in the same mm space as `head_labels.nii.gz`.
-  Pre-computed scalp landmarks (top / front / left / right) are included.
-- **TMS instead of tDCS:** swap `add_tdcslist()` for `add_tmslist()` and set a
-  coil `.fnamecoil` plus a position matrix — see the SimNIBS docs.
-- **Thicker / thinner skull or scalp:** change `SKULL_VOX` / `SCALP_VOX` at the
-  top of `build_head_segmentation.py` and re-run it (needs `nibabel`, `numpy`,
-  `scipy`).
-- **Custom mesh limitation:** because there's no `m2m_` folder, EEG-style
-  positions ("Cz") and MNI mapping aren't available — give electrode/coil
-  placements as **coordinates**, as the script does.
+## Reproduce or refine the model
+
+You normally don't need to — the mesh is delivered — but the full pipeline is
+here and reproducible:
+
+```bash
+# one-time: enable SimNIBS meshing in a headless Linux/py3.11 env
+bash install_simnibs_meshing.sh          # see script header for what it does
+
+# then, with your whole-head MRI:
+export LD_LIBRARY_PATH="$(python3 -c 'import sys,os;print(os.path.join(sys.prefix,"lib"))'):$LD_LIBRARY_PATH"
+python realmri_pipeline.py --mri your_head.nii --atlas-dir .. --out ./out
+# -> out/cat_tissues.nii.gz  and  out/cat_head.msh
+```
+
+To improve quality: add a CT for the skull, hand-correct the brain mask in
+ITK-SNAP (`out/cat_tissues.nii.gz`), then re-run `--stage 3` to re-mesh.
 
 ## References
 
