@@ -95,9 +95,18 @@ def stage2_segment(mri, brain_path, out):
     brain_warp = nib.load(brain_path).get_fdata() > 0.5
 
     sm = ndimage.gaussian_filter(vol, 0.8)
-    fg = ndimage.binary_closing(sm > np.percentile(sm[sm > 0], 12), iterations=2)
+    # air estimated from the 8 FOV corners (head fills the frame, so the full
+    # border isn't air); head = anything well above that, largest blob, filled
+    k = 14
+    corners = np.concatenate([sm[i:j, a:b, c:d].ravel()
+              for i, j in [(0, k), (-k, None)] for a, b in [(0, k), (-k, None)]
+              for c, d in [(0, k), (-k, None)]])
+    thr = max(corners.mean() + 6*corners.std(), corners.max(), 20.0)
+    fg = ndimage.binary_closing(sm > thr, iterations=2)
     lab, _ = ndimage.label(fg)
     head = ndimage.binary_fill_holes(lab == (np.argmax(np.bincount(lab.flat)[1:]) + 1))
+    for ax in range(3):   # slice-wise hole fill catches FOV-spanning concavities
+        head = np.swapaxes(ndimage.binary_fill_holes(np.swapaxes(head, 0, ax)), 0, ax)
 
     brain = ndimage.binary_fill_holes(brain_warp & head)
     lab, _ = ndimage.label(brain)
