@@ -1,0 +1,5 @@
+# Generated artifacts (regenerate with build_head_segmentation.py)
+head_labels.nii.gz
+*.png
+cat_head.msh
+simu_cat_tdcs/

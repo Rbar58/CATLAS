@@ -21,35 +21,45 @@ head** that [SimNIBS](https://simnibs.github.io) can mesh and simulate
 
 | File | Purpose |
 |------|---------|
-| `build_head_segmentation.py` | Builds the labelled head volume from `../TPM.nii`. Already run for you. |
-| `head_labels.nii.gz` | **The output**: a 0.5 mm labelled head (1=WM, 2=GM, 3=CSF, 4=skull, 5=scalp). |
-| `head_model_preview.png` | Picture of the layered model. |
+| `build_head_segmentation.py` | Builds the labelled head volume from `../TPM.nii`. |
 | `run_simnibs_cat.py` | Example tDCS simulation script (run on YOUR machine). |
+| `README.md` | This guide. |
 
-The labels use **SimNIBS' standard tissue numbers**, so SimNIBS applies its
-default conductivities automatically — no extra setup needed.
+Running `build_head_segmentation.py` produces **`head_labels.nii.gz`** — a
+0.5 mm labelled head (1=WM, 2=GM, 3=CSF, 4=skull, 5=scalp). It isn't checked
+into git (it's a derived binary); you regenerate it in step 3 below. The labels
+use **SimNIBS' standard tissue numbers**, so SimNIBS applies its default
+conductivities automatically — no extra setup needed.
 
 ## Step-by-step (on your own computer, where SimNIBS is installed)
 
 1. **Install SimNIBS** if you haven't: https://simnibs.github.io/simnibs/build/html/installation/simnibs_installer.html
 
-2. **Copy this `simnibs_prep` folder to your computer.** The cloud session that
-   generated it can't reach your local SimNIBS.
+2. **Get the whole repo on your computer** (this `simnibs_prep` folder *and*
+   `TPM.nii` one level up). The cloud session that generated this can't reach
+   your local SimNIBS.
 
-3. **Build the mesh** (open a terminal in this folder):
+3. **Generate the labelled head volume** (open a terminal in this folder):
+   ```
+   pip install nibabel numpy scipy      # one-time, if you don't have them
+   python build_head_segmentation.py
+   ```
+   This reads `../TPM.nii` and writes `head_labels.nii.gz`.
+
+4. **Build the mesh:**
    ```
    meshmesh head_labels.nii.gz cat_head.msh --voxsize_meshing 0.5
    ```
    This produces `cat_head.msh`, a tetrahedral head mesh. (`--voxsize_meshing
    0.5` matches the 0.5 mm data and resolves the thin cat-skull shell.)
 
-4. **Look at the mesh** to sanity-check it:
+5. **Look at the mesh** to sanity-check it:
    ```
    gmsh cat_head.msh
    ```
    You should see nested brain → skull → scalp surfaces.
 
-5. **Run the example simulation:**
+6. **Run the example simulation:**
    ```
    simnibs_python run_simnibs_cat.py
    ```
