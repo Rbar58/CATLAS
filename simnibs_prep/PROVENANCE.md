@@ -70,7 +70,7 @@ for a fixed input/version; the GaussianMixture in Stage 2 uses `random_state=0`.
 
 ## Output (delivered)
 
-- `cat_head.msh` — tetrahedral mesh, **85,112 nodes / 479,221 tets**,
+- `cat_head.msh` — tetrahedral mesh, **55,071 nodes / 302,447 tets**,
   region tags 2/3/4/5 (volumes) and 1002/1003/1004/1005 (surfaces).
 - `cat_tissues.nii.gz` — the label volume it was meshed from.
 - QC: `seg_qc.png`, `seg_qc_contour.png`, `mesh_qc_3d.png`.

@@ -23,10 +23,8 @@ positions for your study -- they're just a sensible default to get a field.
 from simnibs import sim_struct, run_simnibs
 
 # --- electrode positions on the scalp, in mm (world coords of THIS model) -----
-ANODE   = [-16.48, 61.19, -46.09]
-CATHODE = [ 29.22, 23.29,  32.79]
-# extra scalp points you can swap in:
-# ALT1 = [-32.24, 31.26, 15.03];  ALT2 = [43.60, 38.33, -31.51]
+ANODE   = [-21.61, 21.64,  31.91]
+CATHODE = [ 34.68, 52.71, -45.53]
 
 
 def main():
