@@ -38,12 +38,22 @@ for a fixed input/version; the GaussianMixture in Stage 2 uses `random_state=0`.
 (The SimpleITK fallback uses sampling seeds 42 and 7.)
 
 **Stage 1 — register CATLAS → subject** (`stage1_register_ants`, default)
+- **N4 bias-field correction** of the subject MRI (`subject_n4.nii.gz`), reused
+  by Stage 2 for the tissue split.
+- **Anatomical header fix** (`anatomical_reorient`): the subject header had its
+  A-P and S-I axes effectively swapped vs. the atlas, rotating the warped brain
+  ~90°. The affine is rewritten so axis0 = L-R (−X), axis1 = A-P (+Y anterior),
+  axis2 = S-I (+Z superior); data is untouched (header-only), so the voxel grid
+  still matches `mmc.nii` and the mask is saved back on the original affine.
+  Verified against anatomy in 3 orthogonal views.
 - Brain mask in atlas space = `(TPM GM+WM+CSF) ≥ 0.5`, used as the *moving mask*
   (`mask_all_stages=True`) so every stage is driven by brain voxels only.
-- **ANTs `SyNRA`**: rigid → affine → SyN deformable, on `CatT1avg.nii` (moving)
-  → subject MRI (fixed). Warp the atlas brain mask with `genericLabel`; keep
-  largest component; fill holes.
-- Output: `brain_in_head.nii.gz` (atlas brain warped to subject; **≈26 mL**,
+- **ANTs `SyNCC`** (cross-correlation metric, `reg_iterations=(120,120,80,40)`):
+  rigid → affine → SyN deformable, on `CatT1avg.nii` (moving) → reoriented
+  subject (fixed). Warp the atlas brain mask with `genericLabel`; keep largest
+  component; close + fill holes. CC pulls the boundary onto the true tissue; the
+  earlier `SyNRA` left the brain slightly small and ventrally shifted.
+- Output: `brain_in_head.nii.gz` (atlas brain warped to subject; **≈28.7 mL**,
   physiologically correct for a cat).
 - *Fallback* `stage1_register` (SimpleITK Similarity3D multi-start {0.6,0.8,1.0}
   + B-spline 6×6×6) is retained but less accurate (≈33 mL, over-includes
@@ -54,9 +64,9 @@ for a fixed input/version; the GaussianMixture in Stage 2 uses `random_state=0`.
   corners (14³ voxels each), threshold = max(mean+6σ, cornermax, 20); binary
   close; keep largest component; fill holes (3D + slice-wise per axis).
 - **Brain**: warped atlas brain ∩ head, filled, largest component, closed.
-- **Brain interior**: 2-class GaussianMixture on the subject's intensities
-  inside the brain → low mean = CSF (3), high mean = brain (2). GM/WM are **not**
-  split (this T1 has ~no GM/WM contrast; cluster means ~250 vs ~262).
+- **Brain interior**: 2-class GaussianMixture on the subject's **N4-corrected**
+  intensities (`subject_n4.nii.gz`) inside the brain → low mean = CSF (3), high
+  mean = brain (2). GM/WM are **not** split (this T1 has ~no GM/WM contrast).
 - **CSF rim**: 1-voxel dilation of brain not already brain → CSF (3).
 - **Skull (APPROXIMATE)**: dilate (brain+CSF) by r = round(1.5 mm / mean voxel)
   voxels, intersect head, minus (brain+CSF) → bone (4). *Geometric shell — T1
@@ -70,7 +80,7 @@ for a fixed input/version; the GaussianMixture in Stage 2 uses `random_state=0`.
 
 ## Output (delivered)
 
-- `cat_head.msh` — tetrahedral mesh, **55,071 nodes / 302,447 tets**,
+- `cat_head.msh` — tetrahedral mesh, **52,609 nodes / 288,718 tets**,
   region tags 2/3/4/5 (volumes) and 1002/1003/1004/1005 (surfaces).
 - `cat_tissues.nii.gz` — the label volume it was meshed from.
 - QC: `seg_qc.png`, `seg_qc_contour.png`, `mesh_qc_3d.png`.

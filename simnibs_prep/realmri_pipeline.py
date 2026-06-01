@@ -7,13 +7,23 @@ older CATLAS-only synthesis (build_head_segmentation.py) by anchoring the model
 on a subject's real MRI:
 
   Stage 1  register   CATLAS (CatT1avg + TPM brain) -> the real head MRI
-                      (similarity, then B-spline deformable; metric focused on
-                       the brain via a moving mask)
+                      preferred path (ANTs): N4 bias correction -> ANATOMICAL
+                      HEADER FIX (see below) -> SyNCC deformable, metric focused
+                      on the brain via a moving mask
   Stage 2  segment    head/scalp from the real MRI; brain extent from the warped
-                      atlas; CSF-vs-brain split from THIS subject's intensities;
+                      atlas; CSF-vs-brain split from THIS subject's N4 intensities;
                       skull as a geometric shell  [APPROXIMATE: T1 cannot image
                       bone -- use a CT for an accurate skull]
   Stage 3  mesh       SimNIBS create_mesh -> tetrahedral .msh
+
+ORIENTATION FIX (important): the delivered subject scan's NIfTI header had its
+anterior-posterior and superior-inferior axes effectively swapped relative to
+the atlas, which rotated the warped brain ~90 deg. Inspecting the anatomy fixed
+the true voxel-axis meaning to (axis0 = L-R, axis1 = A-P anterior-high,
+axis2 = S-I superior-high) and the affine is rewritten to match BEFORE
+registration -- with both images anatomically consistent, SyN has no gross
+rotation to fight. This mapping was determined for THIS subject; a different
+scan may need a different (or no) correction -- always QC the orientation.
 
 Labels (SimNIBS standard): 2=brain 3=CSF 4=bone 5=scalp
 (GM/WM are intentionally merged into one brain compartment: in-vivo T1 here has
@@ -88,22 +98,50 @@ def stage1_register(mri, atlas_dir, out):
 
 
 # ----------------------------------------------------------------------------
-def stage1_register_ants(mri, atlas_dir, out):
-    """Preferred Stage 1: ANTs SyN (rigid+affine+deformable), metric focused on
-    the brain via the atlas brain mask. Much more accurate than the SimpleITK
-    B-spline above for warping a brain-only atlas onto a whole head (observed
-    ~26 mL brain vs ~33 mL, i.e. physiologically correct for a cat). Needs
-    `pip install antspyx`."""
+def anatomical_reorient(mri, out):
+    """Rewrite the subject affine so the voxel axes carry their true anatomical
+    meaning: axis0 = L-R (left = -X), axis1 = A-P (anterior = +Y), axis2 = S-I
+    (superior = +Z). Returns the path to the reoriented (data-identical, header-
+    only) image. NOTE: the axis assignment below was established by inspecting
+    THIS subject's anatomy -- verify/adjust for other scans."""
+    img = nib.load(mri); vol = img.get_fdata().astype(np.float32)
+    sx, sy, sz = [float(z) for z in img.header.get_zooms()[:3]]
+    M = np.array([[-sx, 0, 0], [0, sy, 0], [0, 0, sz]])
+    A = np.eye(4); A[:3, :3] = M; A[:3, 3] = -M @ (np.array(vol.shape) / 2.0)
+    path = os.path.join(out, "subject_reorient.nii.gz")
+    nib.save(nib.Nifti1Image(vol, A), path)
+    print(f"  reoriented header axcodes: {nib.aff2axcodes(A)}  -> {path}")
+    return path
+
+
+def stage1_register_ants(mri, atlas_dir, out, n4=True, reorient=True):
+    """Preferred Stage 1: ANTs SyN focused on the brain via the atlas brain mask.
+    Pre-steps that proved necessary on the real scan:
+      * N4 bias-field correction (also reused for the Stage-2 tissue split), and
+      * anatomical header fix (see module docstring) to remove a ~90 deg rotation.
+    Then SyNCC (cross-correlation metric) -- more accurate at pulling the brain
+    boundary onto the true tissue than SyNRA, which left the brain slightly small
+    and ventrally shifted. Needs `pip install antspyx`."""
     import ants
-    fixed  = ants.image_read(mri)
+    src = mri
+    if n4:
+        print("  N4 bias-field correction ...")
+        fixed_n4 = ants.n4_bias_field_correction(ants.image_read(mri))
+        src = os.path.join(out, "subject_n4.nii.gz")
+        nib.save(nib.Nifti1Image(fixed_n4.numpy(), nib.load(mri).affine), src)
+    if reorient:
+        src = anatomical_reorient(src, out)
+
+    fixed  = ants.image_read(src)
     moving = ants.image_read(os.path.join(atlas_dir, "CatT1avg.nii"))
     tpm = nib.load(os.path.join(atlas_dir, "TPM.nii")).get_fdata()
     bm = ((tpm[..., 0] + tpm[..., 1] + tpm[..., 2]) >= 0.5).astype("float32")
     bm_path = os.path.join(out, "atlas_brain.nii.gz")
     nib.save(nib.Nifti1Image(bm, nib.load(os.path.join(atlas_dir, "CatT1avg.nii")).affine), bm_path)
     moving_mask = ants.image_read(bm_path)
-    reg = ants.registration(fixed=fixed, moving=moving, type_of_transform="SyNRA",
-                            moving_mask=moving_mask, mask_all_stages=True)
+    reg = ants.registration(fixed=fixed, moving=moving, type_of_transform="SyNCC",
+                            moving_mask=moving_mask, mask_all_stages=True,
+                            reg_iterations=(120, 120, 80, 40))
     warped = ants.apply_transforms(fixed=fixed, moving=moving_mask,
                                    transformlist=reg["fwdtransforms"],
                                    interpolator="genericLabel")
@@ -111,7 +149,9 @@ def stage1_register_ants(mri, atlas_dir, out):
     lab, _ = ndimage.label(arr)
     if lab.max() > 0:
         arr = lab == (np.argmax(np.bincount(lab.flat)[1:]) + 1)
-    arr = ndimage.binary_fill_holes(arr)
+    arr = ndimage.binary_fill_holes(ndimage.binary_closing(arr, iterations=1))
+    # the reorientation is header-only, so the voxel grid still matches the
+    # original MRI -- save the mask on the original affine for downstream stages
     out_brain = os.path.join(out, "brain_in_head.nii.gz")
     nib.save(nib.Nifti1Image(arr.astype("uint8"), nib.load(mri).affine), out_brain)
     sp = np.prod(nib.load(mri).header.get_zooms()[:3])
@@ -146,7 +186,11 @@ def stage2_segment(mri, brain_path, out):
         brain = lab == (np.argmax(np.bincount(lab.flat)[1:]) + 1)
     brain = ndimage.binary_fill_holes(ndimage.binary_closing(brain, iterations=2))
 
-    vals = vol[brain].reshape(-1, 1)
+    # CSF/brain split on the N4 bias-corrected intensities if Stage 1 produced
+    # them (cleaner than the raw T1, which carries a shading gradient)
+    n4_path = os.path.join(out, "subject_n4.nii.gz")
+    gmm_vol = nib.load(n4_path).get_fdata().astype(np.float32) if os.path.exists(n4_path) else vol
+    vals = gmm_vol[brain].reshape(-1, 1)
     gmm = GaussianMixture(2, n_init=3, random_state=0).fit(vals)
     order = np.argsort(gmm.means_.ravel())          # low->CSF, high->brain
     to_tissue = {order[0]: 3, order[1]: 2}

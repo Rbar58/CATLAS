@@ -24,11 +24,27 @@ pipeline and qualitative work, not yet publication-grade dosimetry:
   contrast (cluster means ~250 vs ~262), so GM and WM are merged into one
   `brain` label rather than fabricating a split. Add WM later from a better
   scan or by warping the CATLAS WM prior.
-- **Brain mask** is registration-derived (CATLAS→subject) and slightly
-  over-includes ventrally near the skull base. Tighten by hand in ITK-SNAP if
-  needed.
+- **Brain mask** is registration-derived (CATLAS→subject). The subject scan's
+  header had its A-P and S-I axes effectively swapped, which rotated the warped
+  brain ~90°; this is now corrected by an **anatomical header fix** before
+  registration (see "Orientation" below) and the boundary refined with a
+  cross-correlation (`SyNCC`) deformable (brain ≈ 28.7 mL). Still QC every new
+  scan — the axis mapping was determined for *this* subject.
+- **Other tissues follow the brain.** Scalp comes from the real MRI; CSF is a
+  GMM on the subject's N4 intensities *inside* the brain; the bone shell is
+  positioned *around* the brain. So they are only as well-placed as the brain —
+  which is why fixing the brain orientation was the prerequisite for the rest.
 - SimNIBS' automatic segmentation (`charm`) is **human-only** and will not work
   on a cat — that is why the segmentation is built explicitly here.
+
+### Orientation
+
+The subject affine is rewritten so the voxel axes carry their true anatomical
+meaning — axis0 = L-R, axis1 = A-P (anterior +Y), axis2 = S-I (superior +Z) —
+*before* registration, so SyN has no gross rotation to fight. This was verified
+against the anatomy in three orthogonal views (sagittal: anterior up; coronal:
+ventral/dorsal across; horizontal/axial: eyes visible, anterior to one side).
+See `anatomical_reorient()` in `realmri_pipeline.py`.
 
 ## Delivered files (sent to you directly; not committed — they derive from your unpublished MRI)
 
